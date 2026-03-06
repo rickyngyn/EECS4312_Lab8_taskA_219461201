@@ -218,3 +218,141 @@ def recommend_appointment_slots(
     return results
 }
 --------------------------------------------------
+
+Prompt #1: {I accept this. You may now begin code generation with everything we clarified}
+Response #1: {
+    def test_a6_no_availability_returns_empty_list():
+    """
+    Validates C2, C3, C6
+    Linked AC: AC6
+
+    Edge Case: no availability in the working window.
+    """
+    day = date(2026, 2, 24)
+    working = TimeWindow(time(9, 0), time(17, 0))
+    busy = [BusyInterval(time(9, 0), time(17, 0))]
+    duration = timedelta(minutes=30)
+
+    out = suggest_slots(
+        day=day,
+        working_hours=working,
+        busy_intervals=busy,
+        duration=duration,
+        n=5,
+        buffer=timedelta(0),
+        candidate_window=None
+    )
+
+    assert out == []
+
+
+def test_a7_duration_longer_than_any_gap_returns_no_slots():
+    """
+    Validates C4, C6
+    Linked AC: AC3, AC6
+
+    Edge Case: meeting duration is longer than every available gap.
+    """
+    day = date(2026, 2, 24)
+    working = TimeWindow(time(9, 0), time(12, 0))
+    busy = [
+        BusyInterval(time(9, 30), time(10, 30)),
+        BusyInterval(time(11, 0), time(11, 45)),
+    ]
+    duration = timedelta(minutes=40)
+
+    out = suggest_slots(
+        day=day,
+        working_hours=working,
+        busy_intervals=busy,
+        duration=duration,
+        n=5,
+        buffer=timedelta(0),
+        candidate_window=None
+    )
+
+    assert out == []
+
+
+def test_a8_adjacent_busy_intervals_leave_no_gap():
+    """
+    Validates C3, C6
+    Linked AC: AC2, AC6
+
+    Edge Case: adjacent intervals should behave like one continuous blocked period.
+    """
+    day = date(2026, 2, 24)
+    working = TimeWindow(time(9, 0), time(12, 0))
+    busy = [
+        BusyInterval(time(10, 0), time(10, 30)),
+        BusyInterval(time(10, 30), time(11, 0)),
+    ]
+    duration = timedelta(minutes=20)
+
+    out = suggest_slots(
+        day=day,
+        working_hours=working,
+        busy_intervals=busy,
+        duration=duration,
+        n=10,
+        buffer=timedelta(0),
+        candidate_window=None
+    )
+
+    assert_slots_basic_constraints(out, day, working, busy, duration, 10, timedelta(0), None)
+
+    blocked_start = combine(day, time(10, 0))
+    blocked_end = combine(day, time(11, 0))
+
+    for s in out:
+        slot_start = combine(day, s.start_time)
+        slot_end = slot_start + duration
+        assert not overlaps(slot_start, slot_end, blocked_start, blocked_end)
+
+
+def test_a9_n_zero_returns_empty_list():
+    """
+    Validates n boundary handling.
+
+    Edge Case: requesting zero suggestions should return an empty list.
+    """
+    day = date(2026, 2, 24)
+    working = TimeWindow(time(9, 0), time(17, 0))
+    busy = []
+    duration = timedelta(minutes=30)
+
+    out = suggest_slots(
+        day=day,
+        working_hours=working,
+        busy_intervals=busy,
+        duration=duration,
+        n=0,
+        buffer=timedelta(0),
+        candidate_window=None
+    )
+
+    assert out == []
+
+
+def test_a10_invalid_duration_raises_value_error():
+    """
+    Validates input constraint handling.
+
+    duration must be greater than zero.
+    """
+    day = date(2026, 2, 24)
+    working = TimeWindow(time(9, 0), time(17, 0))
+    busy = []
+
+    with pytest.raises(ValueError):
+        suggest_slots(
+            day=day,
+            working_hours=working,
+            busy_intervals=busy,
+            duration=timedelta(0),
+            n=5,
+            buffer=timedelta(0),
+            candidate_window=None
+        )
+}
+
