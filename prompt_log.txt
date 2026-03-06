@@ -1,6 +1,220 @@
-## Student Name:
-## Student ID: 
+## Student Name: Ricky Nguyen
+## Student ID: 219461201
 
-Prompt #1: {}
-Response #1: {}
+Prompt #1: {Before code generation, are there any ambiguities or missing clarifications exist}
+Response #1: {Summary of Ambiguities and Missing Clarifications
+
+Number of returned slots (N) is not defined. It is unclear whether the system should return all valid slots or only a fixed number.
+
+Slot length behavior is unclear. The specification does not state whether returned slots should be exactly the meeting duration or full available gaps.
+
+Buffer application is not fully specified. It is unclear whether the buffer applies before and after busy intervals, or between suggested slots.
+
+Candidate window behavior is unclear when it partially or fully falls outside working hours.
+
+Input validation rules are not defined for invalid inputs such as incorrect time format or negative values.
+
+Handling of overlapping or adjacent busy intervals is mentioned but not explicitly defined in terms of implementation.
+
+Output format is not explicitly specified (e.g., tuples, strings, objects).
+
+Assumed Clarifications for Implementation
+
+Return all valid appointment slots in chronological order.
+
+Each slot will be exactly the required meeting duration.
+
+Output format will be a list of (start_time, end_time) tuples.
+
+Busy intervals will be sorted and merged before processing.
+
+Buffer time will be applied before and after busy intervals when evaluating availability.}
+--------------------------------------------------
+
+Prompt #1: {I accept this. You may now begin code generation with everything we clarified}
+Response #1: {
+    from typing import List, Tuple, Optional
+
+TimeInterval = Tuple[str, str]
+
+
+def time_to_minutes(time_str: str) -> int:
+    """
+    Convert HH:MM to total minutes.
+    """
+    if not isinstance(time_str, str) or len(time_str) != 5 or time_str[2] != ":":
+        raise ValueError("Time must be in HH:MM format")
+
+    hour_part, minute_part = time_str.split(":")
+    if not (hour_part.isdigit() and minute_part.isdigit()):
+        raise ValueError("Time must be in HH:MM format")
+
+    hours = int(hour_part)
+    minutes = int(minute_part)
+
+    if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        raise ValueError("Invalid time value")
+
+    return hours * 60 + minutes
+
+
+def minutes_to_time(total_minutes: int) -> str:
+    """
+    Convert total minutes to HH:MM.
+    """
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def normalize_busy_intervals(busy_intervals: List[TimeInterval]) -> List[Tuple[int, int]]:
+    """
+    Sort and merge overlapping or adjacent busy intervals.
+    """
+    if not busy_intervals:
+        return []
+
+    intervals = []
+    for start, end in busy_intervals:
+        start_min = time_to_minutes(start)
+        end_min = time_to_minutes(end)
+
+        if start_min >= end_min:
+            raise ValueError("Busy interval start must be earlier than end")
+
+        intervals.append((start_min, end_min))
+
+    intervals.sort()
+
+    merged = [intervals[0]]
+    for current_start, current_end in intervals[1:]:
+        last_start, last_end = merged[-1]
+
+        if current_start <= last_end:
+            merged[-1] = (last_start, max(last_end, current_end))
+        elif current_start == last_end:
+            merged[-1] = (last_start, current_end)
+        else:
+            merged.append((current_start, current_end))
+
+    return merged
+
+
+def apply_buffer_to_busy_intervals(
+    busy_intervals: List[Tuple[int, int]],
+    buffer_minutes: int,
+    window_start: int,
+    window_end: int
+) -> List[Tuple[int, int]]:
+    """
+    Expand busy intervals by buffer on both sides, clipped to the active window.
+    """
+    if buffer_minutes < 0:
+        raise ValueError("Buffer must be non negative")
+
+    buffered = []
+    for start, end in busy_intervals:
+        new_start = max(window_start, start - buffer_minutes)
+        new_end = min(window_end, end + buffer_minutes)
+        buffered.append((new_start, new_end))
+
+    if not buffered:
+        return []
+
+    buffered.sort()
+    merged = [buffered[0]]
+
+    for current_start, current_end in buffered[1:]:
+        last_start, last_end = merged[-1]
+        if current_start <= last_end:
+            merged[-1] = (last_start, max(last_end, current_end))
+        else:
+            merged.append((current_start, current_end))
+
+    return merged
+
+
+def recommend_appointment_slots(
+    working_start: str,
+    working_end: str,
+    busy_intervals: List[TimeInterval],
+    meeting_duration: int,
+    buffer_minutes: int = 0,
+    candidate_window: Optional[TimeInterval] = None
+) -> List[TimeInterval]:
+    """
+    Return all valid appointment slots in chronological order.
+
+    Assumptions used from clarified requirements:
+    1. Return all valid slots, not a fixed N.
+    2. Each returned slot is exactly the required meeting duration.
+    3. Output format is a list of (start_time, end_time) tuples.
+    4. Busy intervals are sorted and merged before processing.
+    5. Buffer is applied before and after busy intervals.
+    6. Candidate window is intersected with working hours.
+    """
+    if meeting_duration <= 0:
+        raise ValueError("Meeting duration must be positive")
+
+    working_start_min = time_to_minutes(working_start)
+    working_end_min = time_to_minutes(working_end)
+
+    if working_start_min >= working_end_min:
+        raise ValueError("Working start must be earlier than working end")
+
+    active_start = working_start_min
+    active_end = working_end_min
+
+    if candidate_window is not None:
+        candidate_start, candidate_end = candidate_window
+        candidate_start_min = time_to_minutes(candidate_start)
+        candidate_end_min = time_to_minutes(candidate_end)
+
+        if candidate_start_min >= candidate_end_min:
+            raise ValueError("Candidate window start must be earlier than end")
+
+        active_start = max(active_start, candidate_start_min)
+        active_end = min(active_end, candidate_end_min)
+
+    if active_start >= active_end:
+        return []
+
+    normalized_busy = normalize_busy_intervals(busy_intervals)
+
+    clipped_busy = []
+    for start, end in normalized_busy:
+        overlap_start = max(start, active_start)
+        overlap_end = min(end, active_end)
+        if overlap_start < overlap_end:
+            clipped_busy.append((overlap_start, overlap_end))
+
+    buffered_busy = apply_buffer_to_busy_intervals(
+        clipped_busy,
+        buffer_minutes,
+        active_start,
+        active_end
+    )
+
+    available_gaps = []
+    current = active_start
+
+    for busy_start, busy_end in buffered_busy:
+        if current < busy_start:
+            available_gaps.append((current, busy_start))
+        current = max(current, busy_end)
+
+    if current < active_end:
+        available_gaps.append((current, active_end))
+
+    results = []
+
+    for gap_start, gap_end in available_gaps:
+        slot_start = gap_start
+        while slot_start + meeting_duration <= gap_end:
+            slot_end = slot_start + meeting_duration
+            results.append((minutes_to_time(slot_start), minutes_to_time(slot_end)))
+            slot_start += meeting_duration
+
+    return results
+}
 --------------------------------------------------
