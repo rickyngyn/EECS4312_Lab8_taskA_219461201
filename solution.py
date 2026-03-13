@@ -1,131 +1,51 @@
-## Student Name: Ricky Nguyen
-## Student ID: 219461201
-
-"""
-Task A: Appointment Timeslot Recommender (Stub)
-
-In this lab, you will design and implement an Appointment Slot Recommender using an LLM assistant
-as your primary programming collaborator.
-
-You are asked to implement a Python module that recommends available meeting slots within a
-defined working window.
-
-The system must:
-  • Accept working hours (start and end time).
-  • Accept a list of existing busy intervals.
-  • Accept a required meeting duration.
-  • Accept an optional buffer time between meetings.
-  • Optionally restrict suggestions to a candidate time window.
-  • Return chronologically ordered appointment slots that satisfy all constraints.
-
-The system must ensure that:
-  • Suggested slots fall within working hours.
-  • Suggested slots do not overlap busy intervals.
-  • Buffer time is respected when evaluating availability.
-  • Output ordering is deterministic under identical inputs.
-
-The module must preserve the following invariants:
-  • Returned slots must be at least as long as the required duration.
-  • No returned slot may violate buffer constraints.
-  • The returned list must reflect the current system state.
-
-The system must correctly handle non-trivial scenarios such as:
-  • Adjacent busy intervals.
-  • Very small gaps between meetings.
-  • Buffers eliminating otherwise valid availability.
-  • Overlapping or unsorted busy intervals.
-  • A meeting duration longer than any available gap.
-  • No availability within the working window.
-
-Output:
-  The output consists of the next N valid appointment suggestions in chronological order.
-  Behavior must be deterministic under ties (if any).
-
-See the lab handout for full requirements.
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, time
-from typing import List, Optional, Tuple
+from datetime import date, datetime, time, timedelta
+from typing import List, Optional
 
 
-# ---------------- Data Models ----------------
+class NoValidSlotError(ValueError):
+    """Raised when no valid slot can be generated."""
 
-@dataclass(frozen=True)
-class TimeWindow:
-    """
-    A daily time window.
-    Assumption (unless stated otherwise in handout): non-wrapping window where start < end.
-    """
-    start: time
-    end: time
-
-
-@dataclass(frozen=True)
-class BusyInterval:
-    """
-    A busy interval on the given day.
-    Invariant: start < end
-    """
-    start: time
-    end: time
-
-
-@dataclass(frozen=True)
-class Slot:
-    """
-    A recommended appointment slot.
-
-    start_time is a time-of-day within the working window.
-    Deterministic ordering: sort by start_time ascending.
-    """
-    start_time: time
-
-
-class InfeasibleSchedule(Exception):
-    """Raised when no valid slots can be produced (if required by handout)."""
     pass
 
 
-# ---------------- Helper Functions ----------------
+@dataclass(frozen=True, order=True)
+class TimeWindow:
+    start: time
+    end: time
 
-def _combine(day: date, t: time) -> datetime:
-    return datetime.combine(day, t)
-
-
-def _validate_time_window(window: TimeWindow, name: str) -> None:
-    if window.start >= window.end:
-        raise ValueError(f"{name}.start must be earlier than {name}.end")
-
-
-def _validate_busy_intervals(busy_intervals: List[BusyInterval]) -> None:
-    for interval in busy_intervals:
-        if interval.start >= interval.end:
-            raise ValueError("Each busy interval must have start < end")
+    def validate(self) -> None:
+        if self.start >= self.end:
+            raise ValueError("TimeWindow start must be earlier than end.")
 
 
-def _merge_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
-    """
-    Merge overlapping or adjacent intervals.
-    """
-    if not intervals:
-        return []
+@dataclass(frozen=True, order=True)
+class BusyInterval:
+    start: datetime
+    end: datetime
 
-    intervals.sort(key=lambda x: x[0])
-    merged = [intervals[0]]
-
-    for current_start, current_end in intervals[1:]:
-        last_start, last_end = merged[-1]
-
-        if current_start <= last_end:
-            merged[-1] = (last_start, max(last_end, current_end))
-        else:
-            merged.append((current_start, current_end))
-
-    return merged
+    def validate(self) -> None:
+        if self.start >= self.end:
+            raise ValueError("BusyInterval start must be earlier than end.")
 
 
-# ---------------- Core Function ----------------
+@dataclass(frozen=True, order=True)
+class Slot:
+    start: datetime
+    end: datetime
+
+    def validate(self) -> None:
+        if self.start >= self.end:
+            raise ValueError("Slot start must be earlier than end.")
+
+
+@dataclass(frozen=True)
+class SuggestionResult:
+    slots: List[Slot]
+    explanation: Optional[str] = None
+
 
 def suggest_slots(
     day: date,
@@ -134,101 +54,254 @@ def suggest_slots(
     duration: timedelta,
     n: int,
     buffer: timedelta = timedelta(0),
-    candidate_window: Optional[TimeWindow] = None
+    candidate_window: Optional[TimeWindow] = None,
+    explain_on_failure: bool = False,
 ) -> List[Slot]:
     """
-    Suggest up to the next n valid appointment slots (start times) for the given day.
+    Returns up to n valid suggested slots.
 
-    Args:
-        day: the calendar day for which to suggest slots.
-        working_hours: the allowed working window for meetings (start < end).
-        busy_intervals: list of busy time intervals (may be overlapping / unsorted).
-        duration: required meeting length (must be > 0).
-        n: maximum number of slot suggestions to return (n >= 0).
-        buffer: optional buffer time required between meetings (buffer >= 0).
-        candidate_window: optional extra restriction on suggestions (must lie within this window too).
-
-    Returns:
-        A list of Slot objects, sorted by start_time ascending, deterministic under identical inputs.
-        If no suitable time slots are available, return an empty list.
-
-    Notes:
-        - Suggested slots must fall within working_hours (and candidate_window if provided).
-        - Suggested slots must not overlap busy_intervals, considering buffer time.
-        - You are free to choose internal representation; inputs use time-of-day.
-        - See lab handout for required slot granularity (e.g., 5-min/15-min steps), if any.
+    If explain_on_failure is False and no valid slot exists, a NoValidSlotError is raised.
+    If explain_on_failure is True and no valid slot exists, an empty list is returned.
     """
 
-    if duration <= timedelta(0):
-        raise ValueError("duration must be greater than 0")
-    if n < 0:
-        raise ValueError("n must be >= 0")
-    if buffer < timedelta(0):
-        raise ValueError("buffer must be >= 0")
+    result = suggest_slots_with_explanation(
+        day=day,
+        working_hours=working_hours,
+        busy_intervals=busy_intervals,
+        duration=duration,
+        n=n,
+        buffer=buffer,
+        candidate_window=candidate_window,
+    )
 
-    _validate_time_window(working_hours, "working_hours")
-    _validate_busy_intervals(busy_intervals)
+    if result.slots:
+        return result.slots
 
-    if candidate_window is not None:
-        _validate_time_window(candidate_window, "candidate_window")
+    if explain_on_failure:
+        return []
+
+    raise NoValidSlotError(result.explanation or "No valid slot is available.")
+
+
+def suggest_slots_with_explanation(
+    day: date,
+    working_hours: TimeWindow,
+    busy_intervals: List[BusyInterval],
+    duration: timedelta,
+    n: int,
+    buffer: timedelta = timedelta(0),
+    candidate_window: Optional[TimeWindow] = None,
+) -> SuggestionResult:
+    """
+    Returns a SuggestionResult containing:
+    1. a deterministic list of valid slots
+    2. an explicit explanation if no slot can be generated
+    """
+
+    _validate_inputs(
+        day=day,
+        working_hours=working_hours,
+        busy_intervals=busy_intervals,
+        duration=duration,
+        n=n,
+        buffer=buffer,
+        candidate_window=candidate_window,
+    )
+
+    effective_window = _get_effective_window(day, working_hours, candidate_window)
+    if effective_window is None:
+        return SuggestionResult(
+            slots=[],
+            explanation=(
+                "No valid slot is available because the candidate window does not "
+                "overlap with working hours."
+            ),
+        )
+
+    blocked = _normalize_busy_intervals(
+        day=day,
+        busy_intervals=busy_intervals,
+        effective_start=effective_window.start,
+        effective_end=effective_window.end,
+        buffer=buffer,
+    )
+
+    free_intervals = _compute_free_intervals(
+        effective_start=effective_window.start,
+        effective_end=effective_window.end,
+        blocked=blocked,
+    )
+
+    slots: List[Slot] = []
+    for free_start, free_end in free_intervals:
+        current_start = free_start
+        while current_start + duration <= free_end:
+            current_end = current_start + duration
+            slots.append(Slot(start=current_start, end=current_end))
+            current_start = current_end
+    slots = _deduplicate_and_sort_slots(slots)
 
     if n == 0:
-        return []
+        return SuggestionResult(slots=[])
 
-    working_start_dt = _combine(day, working_hours.start)
-    working_end_dt = _combine(day, working_hours.end)
+    slots = slots[:n]
 
-    # Intersect candidate window with working hours if provided
-    active_start_dt = working_start_dt
-    active_end_dt = working_end_dt
+    if slots:
+        return SuggestionResult(slots=slots)
+
+    return SuggestionResult(
+        slots=[],
+        explanation=_build_no_slot_explanation(
+            effective_window=effective_window,
+            blocked=blocked,
+            duration=duration,
+            buffer=buffer,
+        ),
+    )
+
+
+def _validate_inputs(
+    day: date,
+    working_hours: TimeWindow,
+    busy_intervals: List[BusyInterval],
+    duration: timedelta,
+    n: int,
+    buffer: timedelta,
+    candidate_window: Optional[TimeWindow],
+) -> None:
+    if not isinstance(day, date):
+        raise ValueError("day must be a valid date.")
+
+    working_hours.validate()
 
     if candidate_window is not None:
-        candidate_start_dt = _combine(day, candidate_window.start)
-        candidate_end_dt = _combine(day, candidate_window.end)
+        candidate_window.validate()
 
-        active_start_dt = max(active_start_dt, candidate_start_dt)
-        active_end_dt = min(active_end_dt, candidate_end_dt)
+    if duration <= timedelta(0):
+        raise ValueError("duration must be greater than zero.")
 
-    # No usable window after intersection
-    if active_start_dt >= active_end_dt:
+    if buffer < timedelta(0):
+        raise ValueError("buffer must be non negative.")
+
+    if n < 0:
+        raise ValueError("n must be non negative.")
+
+    for interval in busy_intervals:
+        interval.validate()
+
+
+def _get_effective_window(
+    day: date,
+    working_hours: TimeWindow,
+    candidate_window: Optional[TimeWindow],
+) -> Optional[BusyInterval]:
+    work_start = datetime.combine(day, working_hours.start)
+    work_end = datetime.combine(day, working_hours.end)
+
+    if candidate_window is None:
+        return BusyInterval(start=work_start, end=work_end)
+
+    candidate_start = datetime.combine(day, candidate_window.start)
+    candidate_end = datetime.combine(day, candidate_window.end)
+
+    effective_start = max(work_start, candidate_start)
+    effective_end = min(work_end, candidate_end)
+
+    if effective_start >= effective_end:
+        return None
+
+    return BusyInterval(start=effective_start, end=effective_end)
+
+
+def _normalize_busy_intervals(
+    day: date,
+    busy_intervals: List[BusyInterval],
+    effective_start: datetime,
+    effective_end: datetime,
+    buffer: timedelta,
+) -> List[BusyInterval]:
+    same_day_intervals: List[BusyInterval] = []
+
+    for interval in busy_intervals:
+        if interval.end.date() < day or interval.start.date() > day:
+            continue
+
+        start = interval.start - buffer
+        end = interval.end + buffer
+
+        start = max(start, effective_start)
+        end = min(end, effective_end)
+
+        if start < end:
+            same_day_intervals.append(BusyInterval(start=start, end=end))
+
+    return _merge_intervals(sorted(same_day_intervals, key=lambda x: (x.start, x.end)))
+
+
+def _merge_intervals(intervals: List[BusyInterval]) -> List[BusyInterval]:
+    if not intervals:
         return []
 
-    # Convert busy intervals to datetimes and clip to active window after applying buffer
-    buffered_busy: List[Tuple[datetime, datetime]] = []
-    for interval in busy_intervals:
-        busy_start_dt = _combine(day, interval.start) - buffer
-        busy_end_dt = _combine(day, interval.end) + buffer
+    merged: List[BusyInterval] = [intervals[0]]
 
-        clipped_start = max(busy_start_dt, active_start_dt)
-        clipped_end = min(busy_end_dt, active_end_dt)
+    for current in intervals[1:]:
+        last = merged[-1]
+        if current.start <= last.end:
+            merged[-1] = BusyInterval(
+                start=last.start,
+                end=max(last.end, current.end),
+            )
+        else:
+            merged.append(current)
 
-        if clipped_start < clipped_end:
-            buffered_busy.append((clipped_start, clipped_end))
+    return merged
 
-    # Merge overlapping or adjacent buffered busy intervals
-    merged_busy = _merge_intervals(buffered_busy)
 
-    # Find free gaps
-    free_gaps: List[Tuple[datetime, datetime]] = []
-    cursor = active_start_dt
+def _compute_free_intervals(
+    effective_start: datetime,
+    effective_end: datetime,
+    blocked: List[BusyInterval],
+) -> List[tuple[datetime, datetime]]:
+    free: List[tuple[datetime, datetime]] = []
+    cursor = effective_start
 
-    for busy_start, busy_end in merged_busy:
-        if cursor < busy_start:
-            free_gaps.append((cursor, busy_start))
-        cursor = max(cursor, busy_end)
+    for interval in blocked:
+        if cursor < interval.start:
+            free.append((cursor, interval.start))
+        cursor = max(cursor, interval.end)
 
-    if cursor < active_end_dt:
-        free_gaps.append((cursor, active_end_dt))
+    if cursor < effective_end:
+        free.append((cursor, effective_end))
 
-    # Generate suggestions
-    # Assumption used: a valid suggestion is the earliest start time of a block of exact duration.
-    # No extra step granularity was specified in the stub, so suggestions begin at each free gap start.
-    results: List[Slot] = []
+    return free
 
-    for gap_start, gap_end in free_gaps:
-        if gap_start + duration <= gap_end:
-            results.append(Slot(start_time=gap_start.time()))
-            if len(results) == n:
-                break
 
-    return results
+def _deduplicate_and_sort_slots(slots: List[Slot]) -> List[Slot]:
+    unique = {(slot.start, slot.end): slot for slot in slots}
+    return sorted(unique.values(), key=lambda s: (s.start, s.end))
+
+
+def _build_no_slot_explanation(
+    effective_window: BusyInterval,
+    blocked: List[BusyInterval],
+    duration: timedelta,
+    buffer: timedelta,
+) -> str:
+    total_window = effective_window.end - effective_window.start
+
+    if total_window < duration:
+        return (
+            "No valid slot is available because the available time window is shorter "
+            "than the requested duration."
+        )
+
+    if blocked:
+        return (
+            "No valid slot is available because existing busy intervals and buffer "
+            "requirements leave insufficient free time."
+        )
+
+    return (
+        "No valid slot is available because the request cannot be satisfied under "
+        "the current scheduling constraints."
+    )

@@ -1,0 +1,7 @@
+Prompt 1: Help me write the new functional requirements, mention if it was recently added or just modified. Follow this format:
+1. ADD, "new requirement #1" 
+2. MODIFY, "requirement #2" 
+3.
+Purpose: I asked this prompt to efficiently dtermine which requirements were newly added and which were modified and how
+Response summary:
+It gave me a list of 6 added reuqirements and 2 modified requirements all perfectly labelled correctly.

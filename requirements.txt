@@ -1,0 +1,196 @@
+## 1. Problem Understanding
+
+System purpose:
+The system solves the problem of suggesting valid meeting or reminder time slots while respecting working hours, existing busy intervals, duration, buffer requirements, and optional candidate windows.
+
+Inputs to the system:
+The system receives a scheduling date, working hours, a list of busy intervals, the requested duration, the number of slots requested, the required buffer time, and an optional candidate window.
+
+Outputs produced by the system:
+The system produces a list of valid suggested time slots. If no valid slot exists, the system produces an explicit explanation instead of failing silently.
+
+Primary goal of the system:
+The primary goal of the system is to generate reliable, deterministic, and conflict free slot suggestions with minimal user effort while also providing clear explanations in edge or failure cases.
+
+---
+## 2. Assumptions
+
+A1: All time inputs use the same date and time format.
+
+A2: Working hours define the only time range in which valid slots may be suggested.
+
+A3: Busy intervals are valid time ranges where start time is earlier than end time.
+
+A4: Duration and buffer values are non negative and measured consistently.
+
+A5: If a candidate window is provided, it is intended to further restrict the valid suggestion range.
+
+A6: The same input should always produce the same output.
+
+A7: Users expect the system to automatically avoid conflicts without manual checking.
+
+A8: Users may need explicit explanations when no result can be generated.
+
+---
+## 3. Functional Requirements
+
+FR1: The system shall generate valid suggested slots using the provided date, working hours, busy intervals, duration, buffer time, requested number of slots, and optional candidate window.
+
+FR2: The system shall return only slots that do not overlap with any busy interval and that fit completely within working hours.
+
+FR3: The system shall produce a deterministic and stable ordering of suggested slots when multiple valid slots exist, including ties.
+
+FR4: The system shall prevent duplicate suggested slots in the final output.
+
+FR5: The system shall explicitly report when no valid slot can be generated.
+
+FR6: The system shall provide a clear explanation when a request cannot be scheduled because of conflicts, insufficient free time, or invalid constraints.
+
+FR7: The system shall respect buffer time before and after suggested slots relative to surrounding busy intervals.
+
+FR8: The system shall return no more than the requested number of slots.
+
+---
+## 4. System Constraints
+
+C1:
+Derived from persona attribute: Jane, Need, user expects predictable and stable ordering of system decisions.
+Constraint: The system must produce a deterministic ordering of suggested slots when multiple valid slots occur at the same timestamp.
+
+C2:
+Derived from persona attribute: Jane, Need, user expects the system to automatically resolve conflicts and enforce rules.
+Constraint: The system must automatically avoid scheduling conflicts and generate only slots that do not overlap with existing busy intervals.
+
+C3:
+Derived from persona attribute: Jane, Pain Point, user is frustrated by duplicate notifications or repeated outputs.
+Constraint: The system must not generate duplicate suggested slots or repeated outputs for the same scheduling decision.
+
+C4:
+Derived from persona attribute: Mo, Need, user requires deterministic system behavior under ties or conflicts.
+Constraint: The system must produce the same output when given the same input conditions across repeated executions.
+
+C5:
+Derived from persona attribute: Mo, Need, user wants clear explanations when actions are changed or rejected.
+Constraint: The system must provide a clear explanation when a request cannot be scheduled or when no valid time slot can be generated.
+
+C6:
+Derived from persona attribute: Mo, Pain Point, user is frustrated by silent failures or dropped requests.
+Constraint: The system must explicitly report when no valid scheduling slot exists rather than failing silently.
+
+---
+## 5. Acceptance Criteria
+
+AC1:
+Given multiple valid suggested slots with identical timestamps
+When the system generates the final output
+Then the system shall return the slots in a deterministic and stable order
+Linked Constraint ID(s): C1, C4
+
+AC2:
+Given working hours and a set of busy intervals
+When the system generates suggested slots
+Then every returned slot shall be fully within working hours and shall not overlap with any busy interval
+Linked Constraint ID(s): C2
+
+AC3:
+Given the same scheduling input is submitted more than once
+When the system generates suggested slots
+Then the output shall be identical in content and order across repeated executions
+Linked Constraint ID(s): C1, C4
+
+AC4:
+Given a scheduling request for which no valid slot exists
+When the system attempts to generate suggestions
+Then the system shall explicitly state that no valid slot is available
+Linked Constraint ID(s): C5, C6
+
+AC5:
+Given the final list of suggested slots
+When the system prepares the output
+Then no duplicate slots shall appear in the returned results
+Linked Constraint ID(s): C3
+
+AC6:
+Given a requested duration and buffer time
+When the system generates suggested slots
+Then each returned slot shall satisfy both the duration and the required buffer constraints
+Linked Constraint ID(s): C2
+
+---
+## 6. Edge Cases
+
+EC1:
+Description: No valid slot exists because all free time is blocked or the requested duration cannot fit.
+Expected system behavior: The system shall return no slot suggestions and shall provide an explicit explanation.
+Directly derived from: C5, C6
+
+EC2:
+Description: Multiple valid slots exist with identical timestamps or equivalent tie conditions.
+Expected system behavior: The system shall apply deterministic ordering and return the same order every time.
+Directly derived from: C1, C4
+
+EC3:
+Description: Free time exists, but not enough free time exists once buffer requirements are applied.
+Expected system behavior: The system shall reject those candidate slots and explicitly report that no valid slot can be generated under the current constraints.
+Directly derived from: C2, C5, C6
+
+EC4:
+Description: Duplicate slot suggestions are produced during processing.
+Expected system behavior: The system shall remove duplicates before returning the final result.
+Directly derived from: C3
+
+EC5:
+Description: A candidate window is provided that partially falls outside working hours.
+Expected system behavior: The system shall only consider the intersection that remains valid within working hours, or explicitly report no valid slot if none exists.
+Directly derived from: C2, C6
+
+EC6:
+Description: The user requests more slots than actually exist.
+Expected system behavior: The system shall return only the valid available slots without duplicates or invalid extras.
+Directly derived from: C2, C3
+
+---
+## 7. Traceability
+
+FR1 -> C2 -> AC2, AC6
+
+FR2 -> C2 -> AC2
+
+FR3 -> C1, C4 -> AC1, AC3
+
+FR4 -> C3 -> AC5
+
+FR5 -> C6 -> AC4
+
+FR6 -> C5 -> AC4
+
+FR7 -> C2 -> AC6
+
+FR8 -> C2, C3 -> AC2, AC5
+
+---
+## Revision Notes
+Revision Note 1
+Requirement updated: EC2 – Handling identical slot timestamps
+Reason: During requirement review, the LLM identified ambiguity in how ties between slots with identical timestamps should be resolved.
+Action: Added a deterministic ordering rule to ensure the system consistently orders slots with identical timestamps.
+
+Revision Note 2
+Requirement updated: AC4 – Handling cases where no valid slot exists
+Reason: The LLM identified that the specification required explicit reporting when no slot exists, but the behavior of the explanation message was not clearly defined.
+Action: Updated AC4 and constraint C5 to require the system to return a clear explanation indicating why no valid slot can be generated.
+
+Revision Note 3
+Requirement updated: EC4 – Duplicate slot generation
+Reason: The LLM identified that duplicate slots could appear if overlapping intervals were processed multiple times, but this edge case was not explicitly handled.
+Action: Added EC4 specifying that duplicate slot suggestions must be removed before returning results.
+
+Revision Note 4
+Requirement updated: FR3 – Deterministic output behavior
+Reason: The LLM identified that deterministic behavior across repeated executions was mentioned in constraints but not explicitly enforced in the functional requirements.
+Action: Updated FR3 to require stable ordering and deterministic output when the same inputs are provided.
+
+Revision Note 5
+Requirement updated: EC5 – Candidate window outside working hours
+Reason: The LLM identified a missing edge case where a candidate window could partially or completely fall outside the working hours.
+Action: Added EC5 requiring the system to validate the candidate window and restrict suggestions to the intersection with working hours.
